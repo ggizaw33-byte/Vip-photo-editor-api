@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+deep-translator
+gradio_client
+python-multipart
+pillow
