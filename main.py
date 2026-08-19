@@ -1,5 +1,4 @@
 import os
-import base64
 import tempfile
 import requests
 from fastapi import FastAPI
@@ -9,7 +8,7 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# Instruct-Pix2Pix AI Model
+# AI Client
 ai_client = Client("timbrooks/instruct-pix2pix")
 
 class EditRequest(BaseModel):
@@ -24,16 +23,16 @@ def home():
 def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. ፕሮምፕቱን ወደ እንግሊዝኛ መተርጎም
+        # 1. መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt)
 
-        # 2. ፎቶውን ከቴሌግራም ማውረድ
+        # 2. ፎቶውን ማውረድ
         img_resp = requests.get(req.image_url)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
             temp_file.write(img_resp.content)
             temp_path = temp_file.name
 
-        # 3. AI ሞዴሉ እንዲያስተካክለው መላክ
+        # 3. AI ኤዲት እንዲያደርግ መላክ
         result_path = ai_client.predict(
             image=handle_file(temp_path),
             prompt=translated_prompt,
@@ -43,13 +42,17 @@ def edit_photo(req: EditRequest):
             api_name="/predict"
         )
 
-        # 4. የተስተካከለውን ፎቶ ወደ Base64 መቀየር
+        # 4. የተሰራውን ፎቶ ለቴሌግራም ክፍት ወደሆነ ነፃ Image Hosting መስቀል (ቀጥታ ሊንክ ለመስጠት)
         with open(result_path, "rb") as f:
-            encoded_image = base64.b64encode(f.read()).decode("utf-8")
+            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f})
+            data = upload_resp.json()
+            # tmpfiles url ወደ ቀጥታ ማውረጃ ሊንክ መቀየር
+            raw_url = data["data"]["url"]
+            direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
 
         return {
             "status": "success",
-            "image_base64": f"data:image/jpeg;base64,{encoded_image}"
+            "photo_url": direct_url
         }
 
     except Exception as e:
