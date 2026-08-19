@@ -11,7 +11,7 @@ app = FastAPI(title="VIP AI Photo Editor API")
 # 1. Background Remover
 bg_client = Client("briaai/BRIA-RMBG-1.4")
 
-# 2. ትክክለኛውን ፎቶ መነሻ አድርጎ ልብስና ስታይል የሚቀይር AI (InstructPix2Pix)
+# 2. ትክክክለኛውን ፎቶ መነሻ አድርጎ ልብስና ስታይል የሚቀይር AI (InstructPix2Pix)
 edit_client = Client("lambdalabs/instruct-pix2pix")
 
 class EditRequest(BaseModel):
