@@ -8,12 +8,6 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# 1. Background Remover
-bg_client = Client("briaai/BRIA-RMBG-1.4")
-
-# 2. ትክክክለኛውን ፎቶ መነሻ አድርጎ ልብስና ስታይል የሚቀይር AI (InstructPix2Pix)
-edit_client = Client("lambdalabs/instruct-pix2pix")
-
 class EditRequest(BaseModel):
     image_url: str
     prompt: str
@@ -23,6 +17,7 @@ def home():
     return {"status": "VIP Photo Editor API is running successfully!"}
 
 def upload_image(file_path):
+    # ፎቶውን ወደ ሊንክ ለመቀየር (በ Catbox እና Tmpfiles)
     with open(file_path, "rb") as f:
         resp = requests.post(
             "https://catbox.moe/user/api.php",
@@ -42,11 +37,11 @@ def upload_image(file_path):
 def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. ትዕዛዙን መተርጎም
+        # 1. የገባውን ፕሮምፕት ወደ እንግሊዝኛ መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
         lower_prompt = translated_prompt.lower()
 
-        # 2. የላከውን ፎቶ ማውረድ
+        # 2. ፎቶውን ዳውንሎድ ማድረግ
         img_resp = requests.get(req.image_url, timeout=30)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
             temp_file.write(img_resp.content)
@@ -54,29 +49,38 @@ def edit_photo(req: EditRequest):
 
         result_path = ""
 
-        # 3. ባክግራውንድ ለማጥፋት ከሆነ
+        # 3. ባክግራውንድ ለማጥፋት ከሆነ (ይሄ በትክክል ይሰራል)
         if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
-            result = bg_client.predict(
-                handle_file(temp_path),
-                api_name="/predict"
-            )
+            # Lazy Load - Renderን እንዳያጨናንቀው
+            bg_client = Client("briaai/BRIA-RMBG-1.4")
+            result = bg_client.predict(handle_file(temp_path), api_name="/predict")
             result_path = result if isinstance(result, str) else result[0]
 
-        # 4. ትክክለኛውን የልጁን ፎቶ ይዞ ልብሱን/ነገሩን ለመቀየር
+        # 4. ለማንኛውም ሌላ የፎቶ ትዕዛዝ (All Prompts - ልብስ፣ ከለር፣ ስታይል ወዘተ)
         else:
-            result = edit_client.predict(
-                input_image=handle_file(temp_path),
-                instruction=translated_prompt,
-                steps=20,
-                randomize_seed=True,
-                seed=42,
-                text_cfg=7.5,
-                image_cfg=1.5,
-                api_name="/predict"
-            )
-            result_path = result if isinstance(result, str) else result[0]
+            # Lazy Load - ዋናውን InstructPix2Pix መጠቀም
+            edit_client = Client("timbrooks/instruct-pix2pix")
+            
+            # ተጠቃሚው "change face" ካላለ፣ ፊቱን እንዳይቀይር ለ AI ጥብቅ ትዕዛዝ መስጠት
+            if "change face" not in lower_prompt and "replace face" not in lower_prompt:
+                final_prompt = f"{translated_prompt}, strictly preserve exact facial identity, keep original face, do not modify facial features"
+                img_guidance = 1.8  # ፊቱን እና ዋናውን ቅርጽ አጥብቆ እንዲይዝ ያደርጋል
+            else:
+                # ፊቱን እንዲቀይር ከተፈቀደለት
+                final_prompt = translated_prompt
+                img_guidance = 1.2  # ብዙ ለውጥ እንዲያደርግ ይፈቀድለታል
 
-        # 5. የተስተካከለውን ፎቶ ሊንክ ማግኘት
+            # AI ኤዲት እንዲያደርገው መላክ
+            result = edit_client.predict(
+                final_prompt,
+                handle_file(temp_path),
+                7.5,              # Text Guidance
+                img_guidance,     # Image Guidance (ፊቱን ለመጠበቅ)
+                fn_index=0        # Endpoint ስህተት እንዳያመጣ
+            )
+            result_path = result[0] if isinstance(result, (list, tuple)) else result
+
+        # 5. የተስተካከለውን ፎቶ ሊንክ ማመንጨት
         final_url = upload_image(result_path)
 
         return {
