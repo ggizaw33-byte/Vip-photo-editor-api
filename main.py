@@ -8,11 +8,8 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# 1. Background Remover
+# Background Remover Client
 bg_client = Client("briaai/BRIA-RMBG-1.4")
-
-# 2. ፊትን እና የመጀመሪያውን ፎቶ 100% ጠብቆ የሚያስተካክል Face-Preserving Model
-face_client = Client("AP123/SDXL-Lightning")
 
 class EditRequest(BaseModel):
     image_url: str
@@ -28,13 +25,13 @@ def upload_image(file_path):
             "https://catbox.moe/user/api.php",
             data={"reqtype": "fileupload"},
             files={"fileToUpload": f},
-            timeout=30
+            timeout=40
         )
         if resp.status_code == 200 and resp.text.startswith("http"):
             return resp.text.strip()
         else:
             f.seek(0)
-            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=30)
+            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=40)
             data = upload_resp.json()
             return data["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
 
@@ -42,11 +39,11 @@ def upload_image(file_path):
 def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. ፕሮምፕቱን መተርጎም
+        # 1. ትዕዛዙን መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
         lower_prompt = translated_prompt.lower()
 
-        # 2. የተጠቃሚውን ፎቶ ማውረድ
+        # 2. ፎቶውን ከቴሌግራም ማውረድ
         img_resp = requests.get(req.image_url, timeout=30)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
             temp_file.write(img_resp.content)
@@ -54,20 +51,25 @@ def edit_photo(req: EditRequest):
 
         result_path = ""
 
-        # 3. Background ለማጥፋት ከሆነ
+        # 3. ባክግራውንድ ለማጥፋት (Background Removal)
         if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
-            result = bg_client.predict(handle_file(temp_path), api_name="/predict")
-            result_path = result if isinstance(result, str) else result[0]
-
-        # 4. ፊቱን ጠብቆ ልብስ/ስታይል ለመቀየር (Face Preserving Edit)
-        else:
-            edit_prompt = f"portrait of the same child person, {translated_prompt}, keeping exact facial identity and features, photorealistic, 8k"
-            result = face_client.predict(
-                prompt=edit_prompt,
-                ckpt="8-Step"
+            result = bg_client.predict(
+                handle_file(temp_path),
+                api_name="/predict"
             )
             result_path = result if isinstance(result, str) else result[0]
 
+        # 4. ፊትን ጠብቆ ኤዲት ለማድረግ (Stable Face-Preserving Image-to-Image)
+        else:
+            editor = Client("Zero-GPU-Explorers/FLUX.1-dev-Inpainting")
+            result = editor.predict(
+                image=handle_file(temp_path),
+                prompt=f"{translated_prompt}, high resolution, maintain facial features",
+                api_name="/predict"
+            )
+            result_path = result if isinstance(result, str) else result[0]
+
+        # 5. የተስተካከለውን ፎቶ ሊንክ ማመንጨት
         final_url = upload_image(result_path)
 
         return {
