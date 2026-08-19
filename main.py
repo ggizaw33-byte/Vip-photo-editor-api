@@ -8,8 +8,8 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# AI Client
-ai_client = Client("timbrooks/instruct-pix2pix")
+# ይበልጥ ፈጣንና ቋሚ የሆነ Face-Preserving Image Editor Client
+ai_client = Client("radames/Enhance-This-Edit-That")
 
 class EditRequest(BaseModel):
     image_url: str
@@ -23,30 +23,27 @@ def home():
 def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. መተርጎም
+        # 1. ማንኛውንም ቋንቋ ወደ እንግሊዝኛ መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt)
 
-        # 2. ፎቶውን ማውረድ
+        # 2. ፎቶውን ከቴሌግራም ማውረድ
         img_resp = requests.get(req.image_url)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
             temp_file.write(img_resp.content)
             temp_path = temp_file.name
 
-        # 3. AI ኤዲት እንዲያደርግ መላክ
-        result_path = ai_client.predict(
-            image=handle_file(temp_path),
-            prompt=translated_prompt,
-            num_inference_steps=20,
-            image_guidance_scale=1.5,
-            guidance_scale=7.5,
-            api_name="/predict"
+        # 3. AI ሞዴሉ እንዲያስተካክለው መላክ (ያለ api_name በቀጥታ)
+        result = ai_client.predict(
+            input_image=handle_file(temp_path),
+            instruction=translated_prompt
         )
 
-        # 4. የተሰራውን ፎቶ ለቴሌግራም ክፍት ወደሆነ ነፃ Image Hosting መስቀል (ቀጥታ ሊንክ ለመስጠት)
+        result_path = result if isinstance(result, str) else result[0]
+
+        # 4. የተስተካከለውን ፎቶ ለቴሌግራም ክፍት ወደሆነ ነፃ Image Host መስቀል
         with open(result_path, "rb") as f:
             upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f})
             data = upload_resp.json()
-            # tmpfiles url ወደ ቀጥታ ማውረጃ ሊንክ መቀየር
             raw_url = data["data"]["url"]
             direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
 
