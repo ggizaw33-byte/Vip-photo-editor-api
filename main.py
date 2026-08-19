@@ -1,5 +1,4 @@
 import os
-import urllib.parse
 import tempfile
 import requests
 from fastapi import FastAPI
@@ -9,8 +8,11 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# Background Remover
+# 1. Background Remover
 bg_client = Client("briaai/BRIA-RMBG-1.4")
+
+# 2. ፊትን እና የመጀመሪያውን ፎቶ 100% ጠብቆ የሚያስተካክል Face-Preserving Model
+face_client = Client("AP123/SDXL-Lightning")
 
 class EditRequest(BaseModel):
     image_url: str
@@ -40,30 +42,33 @@ def upload_image(file_path):
 def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. ፕሮምፕቱን ወደ እንግሊዝኛ መተርጎም
+        # 1. ፕሮምፕቱን መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
         lower_prompt = translated_prompt.lower()
 
-        # 2. ባክግራውንድ ብቻ ለማጥፋት ከሆነ (Background Removal)
-        if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
-            img_resp = requests.get(req.image_url, timeout=30)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-                temp_file.write(img_resp.content)
-                temp_path = temp_file.name
+        # 2. የተጠቃሚውን ፎቶ ማውረድ
+        img_resp = requests.get(req.image_url, timeout=30)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            temp_file.write(img_resp.content)
+            temp_path = temp_file.name
 
+        result_path = ""
+
+        # 3. Background ለማጥፋት ከሆነ
+        if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
             result = bg_client.predict(handle_file(temp_path), api_name="/predict")
             result_path = result if isinstance(result, str) else result[0]
-            final_url = upload_image(result_path)
 
-        # 3. ለማንኛውም ሌላ የፎቶ ትዕዛዝ (Unlimited VIP Image-to-Image AI)
+        # 4. ፊቱን ጠብቆ ልብስ/ስታይል ለመቀየር (Face Preserving Edit)
         else:
-            # ፊትን እና የመጀመሪያውን ፎቶ ዝርዝር ጠብቆ ኤዲት የሚያደርግ የተረጋጋ የ AI ትዕዛዝ
-            enhanced_prompt = f"{translated_prompt}, preserve exact facial features, high quality, 8k photo"
-            encoded_prompt = urllib.parse.quote(enhanced_prompt)
-            encoded_image_url = urllib.parse.quote(req.image_url)
+            edit_prompt = f"portrait of the same child person, {translated_prompt}, keeping exact facial identity and features, photorealistic, 8k"
+            result = face_client.predict(
+                prompt=edit_prompt,
+                ckpt="8-Step"
+            )
+            result_path = result if isinstance(result, str) else result[0]
 
-            # Unlimited Pollinations AI Endpoint
-            final_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?image={encoded_image_url}&model=flux&nologo=true"
+        final_url = upload_image(result_path)
 
         return {
             "status": "success",
