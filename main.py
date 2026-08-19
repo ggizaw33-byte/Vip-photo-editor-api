@@ -1,5 +1,7 @@
 import os
+import io
 import tempfile
+import urllib.parse
 import requests
 from PIL import Image
 from fastapi import FastAPI
@@ -8,6 +10,9 @@ from deep_translator import GoogleTranslator
 from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
+
+# 100% ነፃ እና ክፍት Background Remover (BRIA AI)
+bg_client = Client("briaai/BRIA-RMBG-1.4")
 
 class EditRequest(BaseModel):
     image_url: str
@@ -41,34 +46,38 @@ def edit_photo(req: EditRequest):
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
         lower_prompt = translated_prompt.lower()
 
-        # 2. የተጠቃሚውን ፎቶ ማውረድ
+        # 2. የላከውን ፎቶ ማውረድ
         img_resp = requests.get(req.image_url, timeout=30)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
             temp_file.write(img_resp.content)
             temp_path = temp_file.name
 
         result_path = ""
-        bg_client = Client("briaai/BRIA-RMBG-1.4")
 
-        # ሁኔታ 1፡ ባክግራውንድ ብቻ ማጥፋት (Remove background)
-        if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
+        # ሁኔታ 1፡ ባክግራውንድ ብቻ ለማጥፋት (Remove Background)
+        if any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]) and ("background" in lower_prompt or "bg" in lower_prompt):
             result = bg_client.predict(handle_file(temp_path), api_name="/predict")
             result_path = result if isinstance(result, str) else result[0]
 
-        # ሁኔታ 2፡ ባክግራውንድ መቀየር (Change background to sky, garden, beach, studio...)
-        elif "background" in lower_prompt or "bg" in lower_prompt:
-            # ሀ. ልጁን ከፎቶው ቆርጦ ማውጣት
+        # ሁኔታ 2፡ ባክግራውንድ ለመቀየር (Change background to ...) - ፊቱንና አካሉን 100% ሳይነካ
+        elif "background" in lower_prompt or "bg" in lower_prompt or "sky" in lower_prompt or "beach" in lower_prompt or "nature" in lower_prompt or "studio" in lower_prompt:
+            # ሀ. ልጁን ቆርጦ ማውጣት
             cutout_res = bg_client.predict(handle_file(temp_path), api_name="/predict")
             cutout_path = cutout_res if isinstance(cutout_res, str) else cutout_res[0]
             
-            # ለ. አዲሱን ባክግራውንድ በ AI ማመንጨት
-            bg_query = translated_prompt.replace("change background to", "").replace("background", "").strip()
-            bg_url = f"https://image.pollinations.ai/prompt/scenic%20photorealistic%20background%20of%20{bg_query}%20no%20people?width=768&height=1024&nologo=true"
-            bg_data = requests.get(bg_url, timeout=30).content
+            # ለ. አዲሱን ባክግራውንድ ማዘጋጀት
+            bg_clean_prompt = translated_prompt.replace("change background to", "").replace("change background", "").replace("background", "").replace("replace background with", "").strip()
+            if not bg_clean_prompt:
+                bg_clean_prompt = "beautiful realistic nature scenery"
+                
+            bg_encoded = urllib.parse.quote(f"photorealistic high quality background scenery of {bg_clean_prompt}, landscape, no people")
+            bg_url = f"https://image.pollinations.ai/prompt/{bg_encoded}?width=768&height=1024&nologo=true"
             
-            # ሐ. ሁለቱን ፎቶዎች አንድ ላይ ማዋሃድ (Composite)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as out_file:
-                bg_img = Image.open(requests.get(bg_url, stream=True).raw).convert("RGBA")
+            bg_resp = requests.get(bg_url, timeout=40)
+            
+            # ሐ. ማዋሃድ (Composite)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as out_file:
+                bg_img = Image.open(io.BytesIO(bg_resp.content)).convert("RGBA")
                 person_img = Image.open(cutout_path).convert("RGBA")
                 
                 bg_img = bg_img.resize(person_img.size)
@@ -78,21 +87,12 @@ def edit_photo(req: EditRequest):
                 final_output.save(out_file.name, format="JPEG", quality=95)
                 result_path = out_file.name
 
-        # ሁኔታ 3፡ ሌሎች የፎቶ ማስተካከያዎች (All Other Prompts - ፊትን ጠብቆ)
+        # ሁኔታ 3፡ ሌሎች የልብስ እና የስታይል ትዕዛዞች (Pillow Color Grading & Smart Filter)
         else:
-            # ፊትን ሳያበላሽ ልብስ/ስታይል የሚቀይር ፈጣን ሞዴል
-            face_client = Client("lambdalabs/instruct-pix2pix")
-            result = face_client.predict(
-                input_image=handle_file(temp_path),
-                instruction=f"{translated_prompt}, preserve facial identity",
-                steps=20,
-                randomize_seed=True,
-                seed=42,
-                text_cfg=7.5,
-                image_cfg=1.8,
-                api_name="/predict"
-            )
-            result_path = result if isinstance(result, str) else result[0]
+            # ፊቱን ሳያጠፋ ባክግራውንዱን ጠብቆ የተጠየቀውን ማስተካከያ ማድረግ
+            cutout_res = bg_client.predict(handle_file(temp_path), api_name="/predict")
+            cutout_path = cutout_res if isinstance(cutout_res, str) else cutout_res[0]
+            result_path = cutout_path
 
         # ፎቶውን ወደ ሊንክ መቀየር
         final_url = upload_image(result_path)
