@@ -1,37 +1,40 @@
-import io
 import os
+import base64
 import tempfile
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import Response
+import requests
+from fastapi import FastAPI
+from pydantic import BaseModel
 from deep_translator import GoogleTranslator
 from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# Image-to-Image AI Client
+# Instruct-Pix2Pix AI Model
 ai_client = Client("timbrooks/instruct-pix2pix")
+
+class EditRequest(BaseModel):
+    image_url: str
+    prompt: str
 
 @app.get("/")
 def home():
     return {"status": "VIP Photo Editor API is running successfully!"}
 
 @app.post("/edit-photo/")
-async def edit_photo(
-    file: UploadFile = File(...),
-    prompt: str = Form(...)
-):
+def edit_photo(req: EditRequest):
     temp_path = None
     try:
-        # 1. ማንኛውንም ቋንቋ ወደ እንግሊዝኛ መተርጎም
-        translated_prompt = GoogleTranslator(source='auto', target='en').translate(prompt)
+        # 1. ፕሮምፕቱን ወደ እንግሊዝኛ መተርጎም
+        translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt)
 
-        # 2. ፎቶውን ለጊዜው ማስቀመጥ
+        # 2. ፎቶውን ከቴሌግራም ማውረድ
+        img_resp = requests.get(req.image_url)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-            temp_file.write(await file.read())
+            temp_file.write(img_resp.content)
             temp_path = temp_file.name
 
-        # 3. AI ሞዴሉ ፊትን ጠብቆ ኤዲት እንዲያደርግ መላክ
-        result = ai_client.predict(
+        # 3. AI ሞዴሉ እንዲያስተካክለው መላክ
+        result_path = ai_client.predict(
             image=handle_file(temp_path),
             prompt=translated_prompt,
             num_inference_steps=20,
@@ -40,16 +43,18 @@ async def edit_photo(
             api_name="/predict"
         )
 
-        # 4. የተስተካከለውን ፎቶ ማንበብና መመለስ
-        with open(result, "rb") as f:
-            image_bytes = f.read()
+        # 4. የተስተካከለውን ፎቶ ወደ Base64 መቀየር
+        with open(result_path, "rb") as f:
+            encoded_image = base64.b64encode(f.read()).decode("utf-8")
 
-        return Response(content=image_bytes, media_type="image/jpeg")
+        return {
+            "status": "success",
+            "image_base64": f"data:image/jpeg;base64,{encoded_image}"
+        }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"status": "error", "error": str(e)}
 
     finally:
-        # ጊዜያዊ ፋይሉን ማጽዳት
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
