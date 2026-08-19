@@ -16,12 +16,22 @@ class EditRequest(BaseModel):
 def home():
     return {"status": "VIP Photo Editor API is running successfully!"}
 
-def upload_to_tmpfiles(file_path):
+def upload_image(file_path):
+    # ቴሌግራም ያለምንም ችግር የሚያነበው ፈጣን Image Host (Catbox)
     with open(file_path, "rb") as f:
-        upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f})
-        data = upload_resp.json()
-        raw_url = data["data"]["url"]
-        return raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+        resp = requests.post(
+            "https://catbox.moe/user/api.php",
+            data={"reqtype": "fileupload"},
+            files={"fileToUpload": f}
+        )
+        if resp.status_code == 200 and resp.text.startswith("http"):
+            return resp.text.strip()
+        else:
+            # አማራጭ Host (tmpfiles)
+            f.seek(0)
+            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f})
+            data = upload_resp.json()
+            return data["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
 
 @app.post("/edit-photo/")
 def edit_photo(req: EditRequest):
@@ -42,14 +52,12 @@ def edit_photo(req: EditRequest):
         # 3. ባክግራውንድ ለማጥፋት (Background Removal)
         if "background" in lower_prompt and ("remove" in lower_prompt or "delete" in lower_prompt or "clear" in lower_prompt or "cut" in lower_prompt):
             bg_client = Client("briaai/BRIA-RMBG-1.4")
-            # መለኪያውን ያለምንም keyword በቅደም ተከተል መስጠት
             result = bg_client.predict(handle_file(temp_path))
             result_path = result if isinstance(result, str) else result[0]
 
         # 4. አጠቃላይ AI ፎቶ ኤዲቲንግ (Image Editing)
         else:
             ai_client = Client("timbrooks/instruct-pix2pix")
-            # መለኪያዎችን በቅደም ተከተል: (ትዕዛዝ, ፎቶ, Text CFG, Image CFG)
             result = ai_client.predict(
                 translated_prompt,
                 handle_file(temp_path),
@@ -58,8 +66,8 @@ def edit_photo(req: EditRequest):
             )
             result_path = result[0] if isinstance(result, (list, tuple)) else result
 
-        # 5. የተስተካከለውን ፎቶ ወደ ሊንክ መቀየር
-        direct_url = upload_to_tmpfiles(result_path)
+        # 5. የተስተካከለውን ፎቶ ቀጥታ ሊንክ ማግኘት
+        direct_url = upload_image(result_path)
 
         return {
             "status": "success",
