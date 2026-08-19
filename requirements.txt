@@ -1,7 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 requests
+Pillow
 deep-translator
-gradio_client
-pydantic
-pillow
+huggingface_hub
+python-multipart
