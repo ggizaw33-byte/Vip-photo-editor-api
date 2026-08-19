@@ -8,6 +8,10 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
+# ሞዴሎችን አስቀድሞ ማዘጋጀት
+bg_client = Client("briaai/BRIA-RMBG-1.4")
+edit_client = Client("timbrooks/instruct-pix2pix")
+
 class EditRequest(BaseModel):
     image_url: str
     prompt: str
@@ -17,19 +21,20 @@ def home():
     return {"status": "VIP Photo Editor API is running successfully!"}
 
 def upload_image(file_path):
-    # ቴሌግራም ያለምንም ችግር የሚያነበው ፈጣን Image Host (Catbox)
     with open(file_path, "rb") as f:
+        # Catbox ላይ መጫን
         resp = requests.post(
             "https://catbox.moe/user/api.php",
             data={"reqtype": "fileupload"},
-            files={"fileToUpload": f}
+            files={"fileToUpload": f},
+            timeout=30
         )
         if resp.status_code == 200 and resp.text.startswith("http"):
             return resp.text.strip()
         else:
-            # አማራጭ Host (tmpfiles)
+            # ካልሰራ በ tmpfiles አማራጭ
             f.seek(0)
-            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f})
+            upload_resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=30)
             data = upload_resp.json()
             return data["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
 
@@ -39,39 +44,42 @@ def edit_photo(req: EditRequest):
     try:
         # 1. ማንኛውንም ቋንቋ ወደ እንግሊዝኛ መተርጎም
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
+        lower_prompt = translated_prompt.lower()
 
         # 2. ፎቶውን ከቴሌግራም ማውረድ
-        img_resp = requests.get(req.image_url)
+        img_resp = requests.get(req.image_url, timeout=30)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
             temp_file.write(img_resp.content)
             temp_path = temp_file.name
 
-        lower_prompt = translated_prompt.lower()
         result_path = ""
 
-        # 3. ባክግራውንድ ለማጥፋት (Background Removal)
-        if "background" in lower_prompt and ("remove" in lower_prompt or "delete" in lower_prompt or "clear" in lower_prompt or "cut" in lower_prompt):
-            bg_client = Client("briaai/BRIA-RMBG-1.4")
-            result = bg_client.predict(handle_file(temp_path))
+        # 3. ባክግራውንድ ብቻ ለማጥፋት ከሆነ
+        if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
+            result = bg_client.predict(
+                handle_file(temp_path),
+                fn_index=0
+            )
             result_path = result if isinstance(result, str) else result[0]
 
-        # 4. አጠቃላይ AI ፎቶ ኤዲቲንግ (Image Editing)
+        # 4. ለማንኛውም ሌላ የፎቶ ኤዲቲንግ ትዕዛዝ (All Prompts)
         else:
-            ai_client = Client("timbrooks/instruct-pix2pix")
-            result = ai_client.predict(
-                translated_prompt,
-                handle_file(temp_path),
-                7.5,
-                1.5
+            result = edit_client.predict(
+                translated_prompt,          # የ AI ትዕዛዝ
+                handle_file(temp_path),     # የተጠቃሚው ፎቶ
+                7.5,                        # Text guidance scale
+                1.5,                        # Image guidance (ፊቱን እና ቅርጹን ለመጠበቅ)
+                fn_index=0                  # ስህተቱን የሚያጠፋው ዋና ቁልፍ
             )
             result_path = result[0] if isinstance(result, (list, tuple)) else result
 
-        # 5. የተስተካከለውን ፎቶ ቀጥታ ሊንክ ማግኘት
+        # 5. የተስተካከለውን ፎቶ ሊንክ ማመንጨት
         direct_url = upload_image(result_path)
 
         return {
             "status": "success",
-            "photo_url": direct_url
+            "photo_url": direct_url,
+            "translated_prompt": translated_prompt
         }
 
     except Exception as e:
