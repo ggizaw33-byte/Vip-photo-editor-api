@@ -1,5 +1,7 @@
 import os
+import io
 import tempfile
+import urllib.parse
 import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -8,7 +10,7 @@ from gradio_client import Client, handle_file
 
 app = FastAPI(title="VIP AI Photo Editor API")
 
-# Background Remover Client
+# Background Remover Client (ይሄ 100% እየሰራ ያለ ነው)
 bg_client = Client("briaai/BRIA-RMBG-1.4")
 
 class EditRequest(BaseModel):
@@ -43,34 +45,34 @@ def edit_photo(req: EditRequest):
         translated_prompt = GoogleTranslator(source='auto', target='en').translate(req.prompt).strip()
         lower_prompt = translated_prompt.lower()
 
-        # 2. ፎቶውን ከቴሌግራም ማውረድ
-        img_resp = requests.get(req.image_url, timeout=30)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-            temp_file.write(img_resp.content)
-            temp_path = temp_file.name
-
-        result_path = ""
-
-        # 3. ባክግራውንድ ለማጥፋት (Background Removal)
+        # 2. ባክግራውንድ ለማጥፋት ከሆነ
         if "background" in lower_prompt and any(w in lower_prompt for w in ["remove", "delete", "clear", "cut", "no"]):
-            result = bg_client.predict(
-                handle_file(temp_path),
-                api_name="/predict"
-            )
-            result_path = result if isinstance(result, str) else result[0]
+            img_resp = requests.get(req.image_url, timeout=30)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                temp_file.write(img_resp.content)
+                temp_path = temp_file.name
 
-        # 4. ፊትን ጠብቆ ኤዲት ለማድረግ (Stable Face-Preserving Image-to-Image)
+            result = bg_client.predict(handle_file(temp_path), api_name="/predict")
+            result_path = result if isinstance(result, str) else result[0]
+            final_url = upload_image(result_path)
+
+        # 3. ፊትን ጠብቆ ልብስ/ስታይል ለመቀየር (Direct Stable Image-to-Image)
         else:
-            editor = Client("Zero-GPU-Explorers/FLUX.1-dev-Inpainting")
-            result = editor.predict(
-                image=handle_file(temp_path),
-                prompt=f"{translated_prompt}, high resolution, maintain facial features",
-                api_name="/predict"
-            )
-            result_path = result if isinstance(result, str) else result[0]
-
-        # 5. የተስተካከለውን ፎቶ ሊንክ ማመንጨት
-        final_url = upload_image(result_path)
+            # ፎቶውን መነሻ በማድረግ ፊቱን እና ዋና ቅርጹን ጠብቆ የሚያስተካክል ትክክለኛ Prompt
+            full_prompt = f"high quality photograph of the same person, {translated_prompt}, same facial features and identity, highly detailed, realistic, 8k"
+            encoded_prompt = urllib.parse.quote(full_prompt)
+            encoded_img = urllib.parse.quote(req.image_url)
+            
+            # ቀጥተኛ Image-to-Image AI ሊንክ
+            ai_img_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?image={encoded_img}&model=flux-realism&seed=42&nologo=true"
+            
+            # ፎቶው ዝግጁ መሆኑን ማረጋገጥ እና ወደ ሰርቨር መጫን
+            ai_resp = requests.get(ai_img_url, timeout=60)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                temp_file.write(ai_resp.content)
+                temp_path = temp_file.name
+                
+            final_url = upload_image(temp_path)
 
         return {
             "status": "success",
