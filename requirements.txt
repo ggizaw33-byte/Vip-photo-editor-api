@@ -1,7 +1,0 @@
-fastapi
-uvicorn[standard]
-requests
-Pillow
-deep-translator
-huggingface_hub
-python-multipart
