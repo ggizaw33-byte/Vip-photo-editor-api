@@ -1,1 +1,0 @@
-# Vip-photo-editor-api
