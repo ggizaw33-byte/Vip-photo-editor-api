@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>AI Image Generator</title>
+
+    <!-- Telegram WebApp -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <!-- Puter.js -->
+    <script src="https://js.puter.com/v2/"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #0f0f12;
+            color: white;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #aaa;
+            margin-bottom: 25px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 130px;
+            padding: 15px;
+            border-radius: 15px;
+            border: 1px solid #333;
+            background: #18181d;
+            color: white;
+            font-size: 16px;
+            resize: vertical;
+            outline: none;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 15px;
+            padding: 15px;
+            border: 0;
+            border-radius: 15px;
+            background: #5865f2;
+            color: white;
+            font-size: 17px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+        }
+
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            color: #aaa;
+        }
+
+        #result {
+            margin-top: 25px;
+            text-align: center;
+        }
+
+        #result img {
+            width: 100%;
+            max-width: 512px;
+            border-radius: 15px;
+        }
+
+        .download {
+            display: block;
+            margin-top: 12px;
+            padding: 13px;
+            border-radius: 12px;
+            background: #222;
+            color: white;
+            text-decoration: none;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>🎨 AI Image Generator</h1>
+
+    <div class="subtitle">
+        Create images with AI
+    </div>
+
+    <textarea
+        id="prompt"
+        placeholder="Describe the image you want..."
+    ></textarea>
+
+    <button id="generate">
+        🚀 Generate Image
+    </button>
+
+    <div class="status" id="status"></div>
+
+    <div id="result"></div>
+
+</div>
+
+<script>
+
+const tg = window.Telegram.WebApp;
+
+tg.ready();
+tg.expand();
+
+const promptInput = document.getElementById("prompt");
+const generateButton = document.getElementById("generate");
+const statusText = document.getElementById("status");
+const result = document.getElementById("result");
+
+
+// =====================================
+// GET PROMPT FROM TELEGRAM
+// =====================================
+
+const params = new URLSearchParams(window.location.search);
+
+const telegramPrompt = params.get("prompt");
+
+if (telegramPrompt) {
+    promptInput.value = telegramPrompt;
+}
+
+
+// =====================================
+// GENERATE IMAGE
+// =====================================
+
+generateButton.addEventListener("click", async () => {
+
+    const prompt = promptInput.value.trim();
+
+    if (!prompt) {
+
+        statusText.textContent =
+            "⚠️ Please enter an image description.";
+
+        return;
+    }
+
+    generateButton.disabled = true;
+
+    result.innerHTML = "";
+
+    statusText.textContent =
+        "⏳ Generating your image...";
+
+    try {
+
+        const image = await puter.ai.txt2img(prompt, {
+
+            model: "openai/gpt-image-2",
+
+            quality: "low"
+
+        });
+
+
+        result.innerHTML = "";
+
+        result.appendChild(image);
+
+
+        // Download button
+        const download = document.createElement("a");
+
+        download.className = "download";
+
+        download.textContent =
+            "⬇️ Open / Save Image";
+
+        download.target = "_blank";
+
+        download.href = image.src;
+
+        result.appendChild(download);
+
+
+        statusText.textContent =
+            "✅ Image generated successfully!";
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        statusText.textContent =
+            "❌ Image generation failed.";
+
+        result.innerHTML =
+            "<p>Please try again.</p>";
+
+    }
+
+
+    generateButton.disabled = false;
+
+});
+
+</script>
+
+</body>
+</html>
